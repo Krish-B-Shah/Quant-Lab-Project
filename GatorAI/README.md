@@ -1,111 +1,166 @@
-# 🐊 GatorAI  
-**Quant Research & Portfolio Optimization Lab** for SPY, QQQ, and IWM  
+# 🐊 GatorAI
 
-GatorAI provides a structured pipeline for **market data acquisition, cleaning, feature engineering, backtesting strategies, and portfolio optimization**, with a **Streamlit dashboard prototype** for visualization.  
+**Quant Research & Portfolio Optimization Lab**
+
+A structured pipeline for market data acquisition, cleaning, feature engineering, backtesting strategies, and portfolio optimization with an interactive Streamlit dashboard.
+
+**Focus:** SPY, QQQ, and IWM
+
+---
+
+## 📋 Table of Contents
+
+- [Project Structure](#-project-structure)
+- [Quickstart](#-quickstart)
+- [Targets and Tickers](#-targets-and-tickers)
+- [Testing](#-testing)
+- [Tech Stack](#-tech-stack)
+- [Project Goals](#-project-goals)
+- [Development Roadmap](#-development-roadmap)
+- [Team](#-team)
+- [Contributions](#-contributions)
+- [License](#-license)
+- [Contact](#-contact)
 
 ---
 
 ## 🧱 Project Structure
-data/ → Raw and processed datasets, plus small examples for testing
-src/ → Core Python source code organized by module (data, backtesting, optimization, dashboard)
-notebooks/ → Jupyter notebooks for exploration, backtesting, optimization, and dashboard prototyping
-tests/ → Unit and integration tests
-docs/ → Setup guide, API reference, and project plan
-scripts/ → Utility scripts for environment setup and data generation
 
-yaml
-Copy code
+```
+GatorAI/
+├── data/                 # Raw and processed datasets, test samples
+├── src/                  # Core Python modules
+│   ├── data/            # Data acquisition and processing
+│   ├── backtesting/     # Backtesting engine
+│   ├── optimization/    # Portfolio optimization
+│   └── dashboard/       # Streamlit application
+├── notebooks/           # Jupyter notebooks for exploration
+├── tests/               # Unit and integration tests
+├── docs/                # Documentation and guides
+└── scripts/             # Utility scripts
+```
 
 ---
 
-## ⚙️ Quickstart  
+## ⚙️ Quickstart
 
-1. **Create and activate a virtual environment**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate   # (Windows: venv\Scripts\activate)
-Install requirements
+### 1. Set up environment
 
-bash
-Copy code
+```bash
+# Create virtual environment
+python -m venv venv
+
+# Activate (Unix/macOS)
+source venv/bin/activate
+
+# Activate (Windows)
+venv\Scripts\activate
+```
+
+### 2. Install dependencies
+
+```bash
 pip install -r requirements.txt
-(Optional) Generate example data
+```
 
-bash
-Copy code
+### 3. Generate sample data (optional)
+
+```bash
 python scripts/generate_sample_data.py
-Run the Streamlit dashboard prototype
+```
 
-bash
-Copy code
+### 4. Launch dashboard
+
+```bash
 streamlit run src/dashboard/app.py
-🎯 Targets and Tickers
-Initial focus: SPY, QQQ, and IWM.
-The ticker universe can be extended via:
+```
 
-src/data/utils.py — configuration utilities
+---
 
-src/data/fetch_data.py — data acquisition functions
+## 🎯 Targets and Tickers
 
-🧪 Testing
-Run all tests with:
+**Initial Focus:** SPY, QQQ, IWM
 
-bash
-Copy code
+**Extend ticker universe via:**
+- `src/data/utils.py` — Configuration utilities
+- `src/data/fetch_data.py` — Data acquisition functions
+
+---
+
+## 🧪 Testing
+
+Run all tests:
+
+```bash
 pytest -q
-🧠 Team (University of Florida, Fall 2025)
-Krish Shah — Team Lead / Integration & Architecture
+```
 
-Neerav Gandhi
+---
 
-Sparsh Mogha
+## 🧩 Tech Stack
 
-Son Tran
+**Languages:** Python
 
-Navaj Sivkumar
+**Libraries:** pandas, numpy, matplotlib, yfinance, PyPortfolioOpt, scikit-learn, streamlit, plotly
 
-Mahdi Haque
+**Tools:** Git, Jupyter, Streamlit, pytest
 
-Muhammad Ismael
+---
 
-Sidhharth Radhakrishnan
+## 📈 Project Goals
 
-🧩 Tech Stack
-Languages: Python
-Libraries: pandas, numpy, matplotlib, yfinance, PyPortfolioOpt, scikit-learn, streamlit, plotly
-Tools: Git, Jupyter, Streamlit, pytest
+- Build a modular, reproducible research environment for quantitative portfolio optimization
+- Implement AI-assisted risk and return modeling
+- Develop an interactive dashboard for real-time portfolio analysis and backtesting
+- Deliver a polished, production-ready prototype by end of semester
 
-📜 License
-This project is licensed under the MIT License.
-See LICENSE for details.
+---
 
-📈 Project Goals
-Build a modular, reproducible research environment for quantitative portfolio optimization.
+## 🗓️ Development Roadmap
 
-Implement AI-assisted risk and return modeling.
+| Phase | Weeks | Focus |
+|-------|-------|-------|
+| **Phase 1** | 1–3 | Data collection, cleaning, and pipeline setup |
+| **Phase 2** | 4–6 | Backtesting engine and performance metrics |
+| **Phase 3** | 7–8 | Portfolio optimization and AI modeling |
+| **Phase 4** | 9–10 | Dashboard integration, testing, and documentation |
 
-Develop an interactive dashboard for real-time portfolio analysis and backtesting.
+---
 
-Deliver a polished, production-ready prototype by end of semester.
+## 🧠 Team
 
-🗓️ Development Roadmap
-Phase	Weeks	Focus
-Phase 1	1–3	Data collection, cleaning, and pipeline setup
-Phase 2	4–6	Backtesting engine and performance metrics
-Phase 3	7–8	Portfolio optimization and AI modeling
-Phase 4	9–10	Dashboard integration, testing, and documentation
+**University of Florida — Fall 2025**
 
-🤝 Contributions
+- **Krish Shah** — Team Lead / Integration & Architecture
+- Neerav Gandhi
+- Sparsh Mogha
+- Son Tran
+- Navaj Sivkumar
+- Mahdi Haque
+- Muhammad Ismael
+- Sidhharth Radhakrishnan
+
+---
+
+## 🤝 Contributions
+
 We follow a simple Git workflow:
 
-Create a new branch for your feature
+1. Create a new branch for your feature
+2. Commit with clear, descriptive messages
+3. Open a Pull Request
+4. Merge after review and testing
 
-Commit with clear messages
+---
 
-Open a Pull Request
+## 📜 License
 
-Merge after review and testing
+This project is licensed under the MIT License. See `LICENSE` for details.
 
-📫 Contact
-Team Lead: Krish Shah
-University of Florida — Fall 2025
+---
+
+## 📫 Contact
+
+**Team Lead:** Krish Shah  
+**Institution:** University of Florida  
+**Semester:** Fall 2025
