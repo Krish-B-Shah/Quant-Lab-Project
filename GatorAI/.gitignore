@@ -1,0 +1,46 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.env/
+.venv/
+venv/
+ENV/
+
+# Distribution / packaging
+.build/
+build/
+dist/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+.notebooks_cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDEs and editors
+.vscode/
+.idea/
+*.code-workspace
+
+# Data directories
+/data/raw/
+/data/processed/
+/data/examples/
+
+# Cache
+*.cache/
+.cache/
+__pypackages__/
+
+# Streamlit
+.streamlit/
+
+# Logs
+logs/
+*.log
