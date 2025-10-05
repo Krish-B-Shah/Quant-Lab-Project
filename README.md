@@ -1,6 +1,6 @@
 # 🐊 GatorAI
 
-**Quant Research & Portfolio Optimization Lab**
+**Quant Lab**
 
 A structured pipeline for market data acquisition, cleaning, feature engineering, backtesting strategies, and portfolio optimization with an interactive Streamlit dashboard.
 
