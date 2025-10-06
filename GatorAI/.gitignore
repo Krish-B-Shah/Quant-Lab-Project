@@ -33,6 +33,9 @@ Thumbs.db
 /data/processed/
 /data/examples/
 
+# Allow committing a canonical small test CSV used for CI/demo
+!/data/processed/SPY_sontest.csv
+
 # Cache
 *.cache/
 .cache/
