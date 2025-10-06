@@ -37,7 +37,11 @@ def son_backtest_stub(
 
     stats = dict(res.stats)
 
-    stats["max_drawdown"] = max_drawdown(prices)
+    # Max drawdown should be computed on the equity curve, not raw prices
+    try:
+        stats["max_drawdown"] = max_drawdown(res.equity_curve)
+    except Exception:
+        stats["max_drawdown"] = max_drawdown(prices)
 
     stats["final_equity"] = float(res.equity_curve.iloc[-1]) if not res.equity_curve.empty else 1.0
 
