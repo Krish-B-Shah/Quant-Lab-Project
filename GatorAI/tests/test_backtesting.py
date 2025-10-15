@@ -1,4 +1,13 @@
-from GatorAI.src.backtesting.backtest_engine import run_vectorized_backtest
+import sys
+from pathlib import Path
+
+# Add src to path for testing
+root = Path(__file__).resolve().parents[1]
+src_path = str(root / "src")
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
+
+from backtesting.backtest_engine import run_vectorized_backtest
 import pandas as pd
 
 
