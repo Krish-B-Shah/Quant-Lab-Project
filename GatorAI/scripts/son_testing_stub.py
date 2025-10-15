@@ -14,7 +14,7 @@ from backtesting.son_stub import son_backtest_stub
 def main():
     # Pick one of your processed CSVs (resolve relative to GatorAI/ root)
     data_dir = Path(__file__).resolve().parents[1] / "data"
-    csv_path = data_dir / "processed" / "SPY_sontest.csv"
+    csv_path = data_dir / "processed" / "SPY_1d.csv"
 
     # If the expected CSV is missing, provide a clear message and exit
     if not csv_path.exists():
@@ -22,7 +22,7 @@ def main():
         return
 
     # Run the stub
-    stats = son_backtest_stub(csv_path, price_col="Adj Close", cost_bps=1.0)
+    stats = son_backtest_stub(csv_path, price_col="adj_close", cost_bps=1.0)
 
     # Print results
     print("=== Backtest Stub Results ===")
