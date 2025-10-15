@@ -8,7 +8,7 @@ src_path = str(root / "src")
 if src_path not in sys.path:
     sys.path.insert(0, src_path)
 
-from backtesting.son_stub import son_backtest_stub
+from backtesting.backtest_runner import run_csv_backtest
 
 """The testing file is in the data/processed directory"""
 def main():
@@ -21,11 +21,11 @@ def main():
         print(f"ERROR: expected CSV not found at {csv_path}\nPlease generate sample data with `python GatorAI/scripts/generate_sample_data.py` or provide a processed CSV at that path.")
         return
 
-    # Run the stub
-    stats = son_backtest_stub(csv_path, price_col="adj_close", cost_bps=1.0)
+    # Run the backtest
+    stats = run_csv_backtest(csv_path, price_col="adj_close", cost_bps=1.0)
 
     # Print results
-    print("=== Backtest Stub Results ===")
+    print("=== Backtest Results ===")
     for k, v in stats.items():
         print(f"{k:15s}: {v}")
 

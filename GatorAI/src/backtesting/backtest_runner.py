@@ -9,7 +9,7 @@ from .metrics import max_drawdown
 # Set up logging
 logger = logging.getLogger(__name__)
 
-def son_backtest_stub(
+def run_csv_backtest(
         file_path: Union[str, Path],
         price_col: str = 'adj_close',
         date_col: str = 'datetime',
