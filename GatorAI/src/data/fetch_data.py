@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from datetime import datetime
 from typing import Iterable, Optional
 
@@ -22,7 +21,7 @@ def fetch_ohlc(
     start: Optional[str] = None,
     end: Optional[str] = None,
     interval: str = "1d",
-) -> pd.DataFrame:
+) -> pd.DataFrame: # User can pass 4 different parameters based on their choices , ticker like which ticker, start time of data, end time of data and intervals. 
     """Fetch OHLCV data for tickers and save individual CSVs under data/processed.
 
     Returns a long-format DataFrame with columns:
