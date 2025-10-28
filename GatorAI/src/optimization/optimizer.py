@@ -29,8 +29,12 @@ def mean_variance_optimize(
 		w = w / w.sum()
 	return w
 
-def placeholder_weights():
-   portfolio_weights = {"SPY": 0.5, "QQQ": 0.3, "IWM": 0.2}
 
-
-   return pd.Series(portfolio_weights)
+def placeholder_weights() -> pd.Series:
+	"""Generate dummy portfolio weights for testing.
+	
+	Returns:
+		Series with portfolio weights: SPY=50%, QQQ=30%, IWM=20%
+	"""
+	portfolio_weights = {"SPY": 0.5, "QQQ": 0.3, "IWM": 0.2}
+	return pd.Series(portfolio_weights)

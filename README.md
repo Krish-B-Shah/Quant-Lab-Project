@@ -139,6 +139,7 @@ pytest -q
 - Mahdi Haque
 - Muhammad Ismael
 - Sidhharth Radhakrishnan
+- Pratik Patil
 
 ---
 

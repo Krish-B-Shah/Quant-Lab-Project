@@ -11,54 +11,33 @@ from pathlib import Path
 import sys
 import pandas as pd
 
-# Ensure local package sources are importable when running the script directly
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+# Ensure the package `backtesting` (located in GatorAI/src/backtesting) is importable
+# when running this script directly. We add GatorAI/src to sys.path.
+root = Path(__file__).resolve().parents[1]
+src_path = str(root / "src")
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
 
-from backtesting.strategy import (
-    EqualWeightStrategy,
-    MomentumStrategy,
-    VolatilityWeightedStrategy,
-    MeanReversionStrategy,
-)
-from backtesting.strategy import StrategyConfig
+from backtesting.son_stub import son_backtest_stub
 
-
-def make_sample_prices():
-    # 6 business days of simple synthetic prices for 3 tickers
-    idx = pd.date_range("2024-01-02", periods=6, freq="B")
-    data = {
-        "SPY": [100.0, 101.0, 100.5, 101.5, 102.0, 101.8],
-        "QQQ": [200.0, 202.0, 201.0, 203.0, 204.0, 203.5],
-        "IWM": [50.0, 50.5, 50.3, 50.8, 51.0, 50.9],
-    }
-    return pd.DataFrame(data, index=idx)
-
-
-def summarize(df: pd.DataFrame, name: str, n: int = 5):
-    print(f"\n--- {name} (shape={df.shape}) ---")
-    print(df.head(n).round(6))
-    print()
-
-
+"""The testing file is in the data/processed directory"""
 def main():
-    prices = make_sample_prices()
+    # Pick one of your processed CSVs (resolve relative to GatorAI/ root)
+    data_dir = Path(__file__).resolve().parents[1] / "data"
+    csv_path = data_dir / "processed" / "SPY_sontest.csv"
 
-    strategies = [
-        EqualWeightStrategy(),
-        MomentumStrategy(config=StrategyConfig(params={"lookback": 1, "long_only": True})),
-        VolatilityWeightedStrategy(config=StrategyConfig(params={"vol_window": 2, "long_only": True})),
-        MeanReversionStrategy(config=StrategyConfig(params={"lookback": 2, "long_only": True})),
-    ]
+    # If the expected CSV is missing, provide a clear message and exit
+    if not csv_path.exists():
+        print(f"ERROR: expected CSV not found at {csv_path}\nPlease generate sample data with `python GatorAI/scripts/generate_sample_data.py` or provide a processed CSV at that path.")
+        return
 
-    for s in strategies:
-        print(f"\n=== Strategy: {s.name} ===")
-        sig = s.generate_signals(prices)
-        summarize(sig, "signals")
-        w = s.allocate(sig, prices)
-        summarize(w, "weights")
-        # quick checks
-        print("weight row sums:", w.sum(axis=1).round(6).tolist())
+    # Run the stub
+    stats = son_backtest_stub(csv_path, price_col="Adj Close", cost_bps=1.0)
 
+    # Print results
+    print("=== Backtest Stub Results ===")
+    for k, v in stats.items():
+        print(f"{k:15s}: {v}")
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,24 @@
+# Example data_config.yaml
+# Put this file in GatorAI/docs/data_config.yaml and run the CLI with
+#   python -m data.cli --config ..\docs\data_config.yaml --dry-run
+
+# List of tickers to ingest (overrides --tickers when provided)
+# Can be symbols supported by your fetcher (Yahoo, Polygon, etc.)
+tickers:
+  - SPY
+  - QQQ
+  - IWM
+
+# Features to generate; must match keys in CLI's feature_map (macd, rsi, bollinger, ema_cross, sharpe, vol)
+features:
+  - macd
+  - rsi
+
+# Interval passed to the fetcher (1d, 1m, 1h, etc.)
+interval: "1d"
+
+# Optional start / end (ISO format). If omitted the fetcher will use storage latest timestamp logic
+# start: "2020-01-01"
+# end: "2025-10-27"
+
+# Other flags could be added later: storage backend, fetcher selection, api keys, etc.
