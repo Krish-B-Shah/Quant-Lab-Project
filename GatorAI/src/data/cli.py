@@ -10,6 +10,7 @@ import pandas as pd
 
 from .manager import DataManager
 from .storage.sqlite_adapter import SQLiteAdapter
+from .fetcher import get_fetcher
 from . import features as feat
 
 logger = logging.getLogger("gatorai.data")
@@ -25,6 +26,9 @@ def parse_args(argv: List[str] | None = None):
     p.add_argument("--end", default=None)
     p.add_argument("--refresh", action="store_true")
     p.add_argument("--config", default=None, help="path to YAML config file defining tickers/features/interval")
+    p.add_argument("--fetcher", default=None, help="which fetcher to use: yahoo|polygon|alpha_vantage")
+    p.add_argument("--analyze", action="store_true", help="run cross-source analysis for provided tickers")
+    p.add_argument("--sources", nargs="+", default=None, help="list of sources to compare (e.g. csv yahoo polygon)")
     p.add_argument("--dry-run", action="store_true", help="only print what would be ingested/generated without writing to DB")
     return p.parse_args(argv)
 
@@ -33,7 +37,8 @@ async def main(argv: List[str] | None = None):
     args = parse_args(argv)
     # if dry-run, use an in-memory DB so nothing is written to disk
     storage = SQLiteAdapter(db_path=":memory:") if getattr(args, "dry_run", False) else SQLiteAdapter()
-    dm = DataManager(storage)
+    # fetcher selection happens after config parsing so YAML/CLI can override
+    chosen_fetcher = None
     # point to the package's processed folder (GatorAI/data/processed)
     processed_dir = Path(__file__).resolve().parents[2] / "data" / "processed"
     # If local processed CSVs exist for tickers, ingest them first to avoid unnecessary downloads
@@ -85,6 +90,8 @@ async def main(argv: List[str] | None = None):
                 if after == 0:
                     logger.warning("after cleaning, no valid rows in %s for %s", found, t)
                     continue
+                # mark provenance for CSV ingestion
+                pdf["source"] = "csv"
                 storage.upsert_price_data(t, pdf)
                 logger.info("Ingested %d/%d rows for %s from %s", after, before, t, found)
             except Exception:
@@ -103,7 +110,7 @@ async def main(argv: List[str] | None = None):
             "vol": lambda df: feat.rolling_volatility(df),
         }
 
-        # load from config file if provided (overrides CLI tickers/features if specified)
+    # load from config file if provided (overrides CLI tickers/features if specified)
         if getattr(args, "config", None):
             try:
                 # yaml is optional; only try to import it if the user provided a config
@@ -117,6 +124,8 @@ async def main(argv: List[str] | None = None):
                     cfg_tickers = cfg.get("tickers")
                     cfg_features = cfg.get("features")
                     cfg_interval = cfg.get("interval")
+                    cfg_fetcher = cfg.get("fetcher")
+                    cfg_api_key = cfg.get("api_key")
                     if cfg_tickers:
                         args.tickers = cfg_tickers
                     if cfg_features:
@@ -125,6 +134,8 @@ async def main(argv: List[str] | None = None):
                         requested = [s.strip().lower() for s in args.features.split(",") if s.strip()]
                     if cfg_interval:
                         args.interval = cfg_interval
+                    if cfg_fetcher:
+                        chosen_fetcher = (cfg_fetcher, cfg_api_key)
                 else:
                     requested = [s.strip().lower() for s in args.features.split(",") if s.strip()]
             except Exception:
@@ -133,9 +144,35 @@ async def main(argv: List[str] | None = None):
         else:
             requested = [s.strip().lower() for s in args.features.split(",") if s.strip()]
 
+        # if CLI provided a fetcher, it takes precedence over config
+        if getattr(args, "fetcher", None):
+            chosen_fetcher = (args.fetcher, None)
+
+        # instantiate fetcher and DataManager now that config/args are known
+        fetcher_name, fetcher_key = (None, None)
+        if chosen_fetcher:
+            fetcher_name, fetcher_key = chosen_fetcher
+        elif getattr(args, "fetcher", None):
+            fetcher_name = args.fetcher
+
+        fetcher = get_fetcher(fetcher_name, api_key=fetcher_key)
+        dm = DataManager(storage, fetcher=fetcher)
+
         funcs = [feature_map[f] for f in requested if f in feature_map]
 
         start = time.perf_counter()
+        # If analyze flag set, perform cross-source analysis and exit
+        if getattr(args, "analyze", False):
+            from .analysis import compare_sources
+
+            srcs = args.sources or ["csv", "YahooFetcher", "PolygonFetcher"]
+            for t in args.tickers:
+                try:
+                    s = compare_sources(storage, t, srcs)
+                    logger.info("Analysis for %s: %s", t, s)
+                except Exception:
+                    logger.exception("analysis failed for %s", t)
+            return
         logger.info("Starting download for %s", args.tickers)
         combined = await dm.fetch(args.tickers, interval=args.interval, start=args.start, end=args.end, refresh=args.refresh)
         logger.info("Downloaded rows: %s", len(combined))

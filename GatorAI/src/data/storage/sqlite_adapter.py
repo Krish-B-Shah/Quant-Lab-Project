@@ -28,6 +28,7 @@ class SQLiteAdapter:
                 close REAL,
                 adj_close REAL,
                 volume INTEGER,
+                source TEXT,
                 PRIMARY KEY (ticker, datetime)
             )"""
         )
@@ -37,10 +38,26 @@ class SQLiteAdapter:
                 datetime TIMESTAMP,
                 feature_key TEXT,
                 feature_value REAL,
+                source TEXT,
                 PRIMARY KEY (ticker, datetime, feature_key)
             )"""
         )
         self.conn.commit()
+        # ensure columns exist for older DBs
+        # add source column if missing
+        try:
+            cur.execute("PRAGMA table_info(prices)")
+            cols = [r[1] for r in cur.fetchall()]
+            if "source" not in cols:
+                cur.execute("ALTER TABLE prices ADD COLUMN source TEXT")
+            cur.execute("PRAGMA table_info(features)")
+            fcols = [r[1] for r in cur.fetchall()]
+            if "source" not in fcols:
+                cur.execute("ALTER TABLE features ADD COLUMN source TEXT")
+            self.conn.commit()
+        except Exception:
+            # if ALTER TABLE fails for any reason, ignore — tables created above will include source
+            pass
 
     def get_latest_timestamp(self, ticker: str) -> Optional[pd.Timestamp]:
         cur = self.conn.cursor()
@@ -56,11 +73,22 @@ class SQLiteAdapter:
 
     def upsert_price_data(self, ticker: str, df: pd.DataFrame) -> None:
         # df should contain datetime, open, high, low, close, adj_close, volume
-        df = df[["datetime", "open", "high", "low", "close", "adj_close", "volume"]].copy()
-        # prepare rows for INSERT OR REPLACE using column-wise iteration to avoid Series/duplicate-column issues
+        # source is optional: can be included as df['source'] or passed via kwargs
+        cols = ["datetime", "open", "high", "low", "close", "adj_close", "volume"]
+        if "source" in df.columns:
+            cols.append("source")
+        df = df[cols].copy()
+        # prepare rows for INSERT OR REPLACE using row iteration for clarity
         rows = []
-        for dt, o, h, l, c, ac, v in zip(df["datetime"], df["open"], df["high"], df["low"], df["close"], df["adj_close"], df["volume"]):
-            # coerce and validate
+        for _, r in df.iterrows():
+            dt = r["datetime"]
+            o = r["open"]
+            h = r["high"]
+            l = r["low"]
+            c = r["close"]
+            ac = r["adj_close"]
+            v = r["volume"]
+            src = r["source"] if "source" in r.index else None
             try:
                 if pd.isna(dt) or pd.isna(o) or pd.isna(h) or pd.isna(l) or pd.isna(c) or pd.isna(ac) or pd.isna(v):
                     continue
@@ -78,6 +106,7 @@ class SQLiteAdapter:
                     float(c),
                     float(ac),
                     int(v),
+                    src,
                 )
                 rows.append(row)
             except Exception:
@@ -88,14 +117,32 @@ class SQLiteAdapter:
             return
 
         cur = self.conn.cursor()
-        cur.executemany(
-            "INSERT OR REPLACE INTO prices (ticker, datetime, open, high, low, close, adj_close, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            rows,
-        )
+        # if source column exists in table, include it in insert
+        cur.execute("PRAGMA table_info(prices)")
+        cols = [r[1] for r in cur.fetchall()]
+        if "source" in cols:
+            cur.executemany(
+                "INSERT OR REPLACE INTO prices (ticker, datetime, open, high, low, close, adj_close, volume, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+        else:
+            # fallback for older schema
+            trimmed = [r[:-1] for r in rows]
+            cur.executemany(
+                "INSERT OR REPLACE INTO prices (ticker, datetime, open, high, low, close, adj_close, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                trimmed,
+            )
         self.conn.commit()
 
-    def read_price_data(self, ticker: str) -> pd.DataFrame:
-        df = pd.read_sql_query("SELECT * FROM prices WHERE ticker = ? ORDER BY datetime", self.conn, params=(ticker,))
+    def read_price_data(self, ticker: str, source: Optional[str] = None) -> pd.DataFrame:
+        """Read price data for a ticker. If source is provided, filter by source.
+
+        Returns a DataFrame ordered by datetime.
+        """
+        if source:
+            df = pd.read_sql_query("SELECT * FROM prices WHERE ticker = ? AND source = ? ORDER BY datetime", self.conn, params=(ticker, source))
+        else:
+            df = pd.read_sql_query("SELECT * FROM prices WHERE ticker = ? ORDER BY datetime", self.conn, params=(ticker,))
         # ensure datetime is parsed
         if not df.empty and "datetime" in df.columns:
             df["datetime"] = pd.to_datetime(df["datetime"])
@@ -123,7 +170,16 @@ class SQLiteAdapter:
                 val = r[c]
                 if pd.isna(val):
                     continue
-                rows.append((ticker, pd.Timestamp(dt).to_pydatetime(), c, float(val)))
+                # include optional source column if present on feat_df
+                src = r.get("source") if "source" in feat_df.columns else None
+                rows.append((ticker, pd.Timestamp(dt).to_pydatetime(), c, float(val), src))
         cur = self.conn.cursor()
-        cur.executemany("INSERT OR REPLACE INTO features (ticker, datetime, feature_key, feature_value) VALUES (?, ?, ?, ?)", rows)
+        # adapt insert depending on schema
+        cur.execute("PRAGMA table_info(features)")
+        fcols = [r[1] for r in cur.fetchall()]
+        if "source" in fcols:
+            cur.executemany("INSERT OR REPLACE INTO features (ticker, datetime, feature_key, feature_value, source) VALUES (?, ?, ?, ?, ?)", rows)
+        else:
+            trimmed = [r[:-1] for r in rows]
+            cur.executemany("INSERT OR REPLACE INTO features (ticker, datetime, feature_key, feature_value) VALUES (?, ?, ?, ?)", trimmed)
         self.conn.commit()

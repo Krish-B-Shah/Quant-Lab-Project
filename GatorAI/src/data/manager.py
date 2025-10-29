@@ -20,15 +20,18 @@ class DataManager:
     - Feature generation functions are passed in (callable that takes a price df and returns df).
     """
 
-    def __init__(self, storage_adapter, fetcher: BaseFetcher | None = None, features: Optional[List] = None):
+    def __init__(self, storage_adapter, fetcher: BaseFetcher | None = None, features: Optional[List] = None, max_concurrency: int = 8):
         self.storage = storage_adapter
         self.fetcher = fetcher or YahooFetcher()
         self.features = features or []
+        # semaphore for bounded concurrency (useful for rate-limited APIs)
+        self._sem = asyncio.Semaphore(max_concurrency)
 
     async def _download_one(self, ticker: str, start: Optional[str], end: Optional[str], interval: str) -> pd.DataFrame:
         # delegate to fetcher
         try:
-            df = await self.fetcher.fetch(ticker, start, end, interval)
+            async with self._sem:
+                df = await self.fetcher.fetch(ticker, start, end, interval)
         except Exception:
             logger.exception("fetcher failed for %s", ticker)
             return pd.DataFrame()
@@ -63,6 +66,10 @@ class DataManager:
             # convert datetime
             tdf["datetime"] = pd.to_datetime(tdf["datetime"])
             try:
+                # pass source information when available
+                src = getattr(self.fetcher, "name", None) or self.fetcher.__class__.__name__
+                # attach source column for adapter to pick up
+                tdf["source"] = src
                 self.storage.upsert_price_data(t, tdf)
             except Exception:
                 logger.exception("failed to upsert price data for %s", t)
