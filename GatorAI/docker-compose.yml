@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  gatorai:
+    build:
+      context: .
+      target: development
+    ports:
+      - "8501:8501"  # Streamlit dashboard
+      - "8888:8888"  # Jupyter (optional)
+    volumes:
+      - .:/app
+      - ./data:/app/data
+      - gatorai_cache:/app/.cache
+    environment:
+      - PYTHONPATH=/app/src
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+    command: streamlit run src/dashboard/app.py --server.port=8501 --server.address=0.0.0.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.path.insert(0, 'src'); from data.manager import DataManager; print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  database:
+    image: sqlite3:latest
+    volumes:
+      - gatorai_db:/data
+    command: ["sqlite3", "/data/gatorai.db", ".read /dev/null"]
+    healthcheck:
+      test: ["CMD", "sqlite3", "/data/gatorai.db", "SELECT 1;"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  jupyter:
+    build:
+      context: .
+      target: development
+    ports:
+      - "8888:8888"
+    volumes:
+      - .:/app
+      - ./notebooks:/app/notebooks
+      - gatorai_cache:/app/.cache
+    environment:
+      - PYTHONPATH=/app/src
+      - JUPYTER_TOKEN=gatorai2024
+    command: jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='gatorai2024'
+    depends_on:
+      - gatorai
+
+  testing:
+    build:
+      context: .
+      target: development
+    volumes:
+      - .:/app
+      - gatorai_cache:/app/.cache
+    environment:
+      - PYTHONPATH=/app/src
+    command: pytest tests/ -v --cov=src --cov-report=term-missing
+    profiles:
+      - testing
+
+volumes:
+  gatorai_db:
+    driver: local
+  gatorai_cache:
+    driver: local
+
+networks:
+  default:
+    name: gatorai_network
