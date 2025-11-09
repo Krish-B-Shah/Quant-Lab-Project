@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Dict
 
 import numpy as np
 import pandas as pd
@@ -18,19 +18,148 @@ Monte Carlo Simulation – test robustness under simulated future returns.
 '''
 
 
+# ---------------------------------------------------------
+# Helpers: ML blending and constraint enforcement
+# ---------------------------------------------------------
+def get_effective_mu(
+        returns: pd.DataFrame,
+        predicted_returns: Optional[pd.Series] = None,
+        blend: float = 0.5,
+) -> pd.Series:
+    """
+    Combine historical mean returns and ML-predicted expected returns.
+
+    blend = 0.0 -> purely historical
+    blend = 1.0 -> purely ML predictions
+
+    predicted_returns may be a pd.Series indexed by asset names; missing
+    values are filled with historical means.
+    """
+    mu_hist = returns.mean()
+    if predicted_returns is None:
+        return mu_hist
+    pred = predicted_returns.reindex(mu_hist.index).fillna(mu_hist)
+    mu_eff = (1.0 - blend) * mu_hist + blend * pred
+    return mu_eff
+
+
+def _sector_index_map(assets: pd.Index, sector_map: Optional[Dict[str, str]]) -> Dict[str, np.ndarray]:
+    """
+    Build mapping sector -> numpy array of indices for assets in that sector.
+    """
+    if sector_map is None:
+        return {}
+    mapping: Dict[str, list] = {}
+    for i, a in enumerate(assets):
+        s = sector_map.get(a)
+        if s is None:
+            continue
+        mapping.setdefault(s, []).append(i)
+    return {k: np.array(v, dtype=int) for k, v in mapping.items()}
+
+
+def _enforce_constraints_posthoc(
+        w: pd.Series,
+        *,
+        long_only: bool = True,
+        position_limit: Optional[float] = None,
+        sector_caps: Optional[Dict[str, float]] = None,
+        sector_map: Optional[Dict[str, str]] = None,
+        previous_weights: Optional[pd.Series] = None,
+        max_turnover: Optional[float] = None,
+        weights_sum_to_one: bool = True,
+) -> pd.Series:
+    """
+    Apply practical constraints after an analytical or numerical solve.
+    This includes:
+     - enforce long_only (clip negatives)
+     - apply per-position upper bound (position_limit)
+     - apply sector caps by proportional scaling within sector if sum > cap
+     - enforce turnover (simple proportional shrink towards previous weights to meet L1 cap)
+     - renormalize to sum-to-one if requested
+    """
+
+    w = w.copy().astype(float).reindex(w.index).fillna(0.0)
+
+    # long-only
+    if long_only:
+        w = w.clip(lower=0.0)
+
+    # position limit
+    if position_limit is not None:
+        w = w.clip(upper=position_limit)
+
+    # sector caps: proportional scaling within sector if over cap
+    if sector_caps and sector_map:
+        sectors = _sector_index_map(w.index, sector_map)
+        for sector, idxs in sectors.items():
+            cap = sector_caps.get(sector)
+            if cap is None:
+                continue
+            names = w.index[idxs]
+            total = float(w.loc[names].sum())
+            if total > cap and total > 0:
+                scale = cap / total
+                w.loc[names] = w.loc[names] * scale
+
+    # renormalize to 1 (if requested)
+    if weights_sum_to_one:
+        s = w.sum()
+        if s == 0:
+            # fallback to equal weight
+            n = len(w)
+            w = pd.Series(np.ones(n) / n, index=w.index)
+        else:
+            w = w / s
+
+    # turnover enforcement (L1): if prev provided and max_turnover specified
+    if max_turnover is not None and previous_weights is not None:
+        prev = previous_weights.reindex(w.index).fillna(0.0)
+        l1 = float((w - prev).abs().sum())
+        if l1 > max_turnover and l1 > 0:
+            # scale the difference to meet max_turnover
+            factor = max_turnover / l1
+            w = prev + (w - prev) * factor
+            if weights_sum_to_one:
+                s = w.sum()
+                if s == 0:
+                    w = pd.Series(np.ones(len(w)) / len(w), index=w.index)
+                else:
+                    w = w / s
+
+    return w
+
+
+# ---------------------------------------------------------
 # Mean-Variance (Markowitz)
+# ---------------------------------------------------------
 def mean_variance_optimize(
         returns: pd.DataFrame,
+        predicted_returns: Optional[pd.Series] = None,
+        blend: float = 0.5,
         risk_aversion: float = 1.0,
         long_only: bool = True,
         weights_sum_to_one: bool = True,
         epsilon: float = 1e-8,
+        # real-world constraints:
+        sector_caps: Optional[Dict[str, float]] = None,
+        sector_map: Optional[Dict[str, str]] = None,
+        position_limit: Optional[float] = None,
+        previous_weights: Optional[pd.Series] = None,
+        max_turnover: Optional[float] = None,
 ) -> pd.Series:
-    mu = returns.mean()
+    """
+    Mean-Variance optimization, slightly modified to accept ML predicted returns
+    and allow post-hoc enforcement of common production constraints for integration
+    with dashboard/backtester.
+    """
+    mu = get_effective_mu(returns, predicted_returns, blend)
     cov = returns.cov() + np.eye(len(mu)) * epsilon
     inv_cov = pd.DataFrame(inv(cov.values), index=cov.index, columns=cov.columns)
     raw = inv_cov @ mu
     w = raw / raw.sum()
+
+    # original behavior: long-only and normalization
     if long_only:
         w = w.clip(lower=0.0)
         if w.sum() == 0:
@@ -39,6 +168,19 @@ def mean_variance_optimize(
             w = w / w.sum()
     if weights_sum_to_one:
         w = w / w.sum()
+
+    # Now enforce production constraints post-hoc (position limits, sector caps, turnover)
+    w = _enforce_constraints_posthoc(
+        w,
+        long_only=long_only,
+        position_limit=position_limit,
+        sector_caps=sector_caps,
+        sector_map=sector_map,
+        previous_weights=previous_weights,
+        max_turnover=max_turnover,
+        weights_sum_to_one=weights_sum_to_one,
+    )
+
     return w
 
 
@@ -52,7 +194,9 @@ def placeholder_weights():
     return pd.Series(portfolio_weights)
 
 
+# ---------------------------------------------------------
 # Black–Litterman Model
+# ---------------------------------------------------------
 def black_litterman_optimize(
         returns: pd.DataFrame,
         P: Optional[np.ndarray] = None,
@@ -61,6 +205,16 @@ def black_litterman_optimize(
         omega: Optional[np.ndarray] = None,
         market_weights: Optional[pd.Series] = None,
         risk_aversion: float = 2.5,
+        # ML integration
+        predicted_returns: Optional[pd.Series] = None,
+        blend: float = 0.5,
+        # constraints
+        position_limit: Optional[float] = None,
+        sector_caps: Optional[Dict[str, float]] = None,
+        sector_map: Optional[Dict[str, str]] = None,
+        previous_weights: Optional[pd.Series] = None,
+        max_turnover: Optional[float] = None,
+        epsilon: float = 1e-8,
 ) -> pd.Series:
     """
     Black–Litterman implementation with proper μ_bl integration.
@@ -70,6 +224,9 @@ def black_litterman_optimize(
     P	View matrix (which assets/views you have opinions on)
     Q	Expected returns for those views
     Ω	Uncertainty in your views
+
+    This version blends the Black-Litterman implied returns with ML predictions
+    (if provided) via `blend` and applies simple production constraints post-hoc.
     """
     Σ = returns.cov().values
     n = Σ.shape[0]
@@ -92,20 +249,54 @@ def black_litterman_optimize(
 
     μ_bl = pd.Series(μ_bl, index=assets)
 
-    # 3: Compute weights directly using μ_bl
+    # Blend BL returns with ML predictions (treat μ_bl as historical baseline if pred provided)
+    if predicted_returns is None:
+        mu = μ_bl
+    else:
+        # Blend predicted_returns with μ_bl: predicted has weight `blend`
+        mu = (1.0 - blend) * μ_bl + blend * predicted_returns.reindex(assets).fillna(μ_bl)
+
+    # 3: Compute weights directly using mu (analytical inverse-cov like your original)
     cov = pd.DataFrame(Σ, index=assets, columns=assets)
     inv_cov = pd.DataFrame(np.linalg.inv(cov.values), index=assets, columns=assets)
-    raw = inv_cov @ μ_bl
+    raw = inv_cov @ mu
     w = raw / raw.sum()
 
-    # 4: Optional constraints
+    # 4: Optional constraints - clip long only and normalize (original behavior)
     w = w.clip(lower=0)
     w = w / w.sum()
+
+    # Apply production constraints post-hoc
+    w = _enforce_constraints_posthoc(
+        w,
+        long_only=True,
+        position_limit=position_limit,
+        sector_caps=sector_caps,
+        sector_map=sector_map,
+        previous_weights=previous_weights,
+        max_turnover=max_turnover,
+        weights_sum_to_one=True,
+    )
+
     return w
 
 
+# ---------------------------------------------------------
 # Risk Parity Optimization
-def risk_parity_optimize(returns: pd.DataFrame, long_only: bool = True) -> pd.Series:
+# ---------------------------------------------------------
+def risk_parity_optimize(
+        returns: pd.DataFrame,
+        long_only: bool = True,
+        # kept signature param for API compatibility (not directly used by classic RP)
+        predicted_returns: Optional[pd.Series] = None,
+        blend: float = 0.5,
+        # constraints
+        position_limit: Optional[float] = None,
+        sector_caps: Optional[Dict[str, float]] = None,
+        sector_map: Optional[Dict[str, str]] = None,
+        previous_weights: Optional[pd.Series] = None,
+        max_turnover: Optional[float] = None,
+) -> pd.Series:
     Σ = returns.cov().values
     assets = returns.columns
     n = len(assets)
@@ -123,25 +314,71 @@ def risk_parity_optimize(returns: pd.DataFrame, long_only: bool = True) -> pd.Se
     x0 = np.ones(n) / n
     bounds = [(0, 1) if long_only else (None, None)] * n
     cons = [{"type": "eq", "fun": lambda w: np.sum(w) - 1}]
+    # Add turnover constraint if requested (scipy-form)
+    if max_turnover is not None and previous_weights is not None:
+        prev_arr = previous_weights.reindex(assets).fillna(0.0).values
+        cons.append({'type': 'ineq', 'fun': lambda w, prev=prev_arr, cap=max_turnover: cap - np.sum(np.abs(w - prev))})
+    # Add sector caps as constraints
+    if sector_caps and sector_map:
+        sectors = _sector_index_map(assets, sector_map)
+        for sector, idxs in sectors.items():
+            cap = sector_caps.get(sector)
+            if cap is None:
+                continue
+            cons.append({'type': 'ineq', 'fun': lambda w, idxs=idxs, cap=cap: cap - np.sum(w[idxs])})
+
     res = minimize(objective, x0, bounds=bounds, constraints=cons)
-    return pd.Series(res.x, index=assets)
+    if not res.success:
+        w = pd.Series(np.ones(n) / n, index=assets)
+    else:
+        w = pd.Series(res.x, index=assets)
+
+    # enforce position limit & long-only & normalization
+    w = _enforce_constraints_posthoc(
+        w,
+        long_only=long_only,
+        position_limit=position_limit,
+        sector_caps=sector_caps,
+        sector_map=sector_map,
+        previous_weights=previous_weights,
+        max_turnover=max_turnover,
+        weights_sum_to_one=True,
+    )
+    return w
 
 
+# ---------------------------------------------------------
 # Conditional Value at Risk (CVaR)
+# ---------------------------------------------------------
 def cvar_optimize(
         returns: pd.DataFrame,
+        predicted_returns: Optional[pd.Series] = None,
+        blend: float = 0.5,
         alpha: float = 0.95,
         target_return: Optional[float] = None,
         long_only: bool = True,
+        # constraints
+        position_limit: Optional[float] = None,
+        sector_caps: Optional[Dict[str, float]] = None,
+        sector_map: Optional[Dict[str, str]] = None,
+        previous_weights: Optional[pd.Series] = None,
+        max_turnover: Optional[float] = None,
 ) -> pd.Series:
     """
-    Minimize CVaR subject to constraints.
+    Minimize CVaR subject to constraints. Uses historical return scenarios in `returns`.
+    Now accepts ML-predicted returns + blending to set target_return or to be used
+    in additional constraints if desired (we use blended mean for target_return tests).
     """
     T, n = returns.shape
     R = returns.values
+    assets = returns.columns
+
     w = cp.Variable(n)
     z = cp.Variable()
     u = cp.Variable(T)
+
+    # blended expected returns used for optional target constraint
+    mu = get_effective_mu(returns, predicted_returns, blend).reindex(assets).fillna(0).values
 
     constraints = [
         u >= -R @ w - z,
@@ -150,27 +387,68 @@ def cvar_optimize(
     ]
     if long_only:
         constraints.append(w >= 0)
+    if position_limit is not None:
+        constraints.append(w <= position_limit)
+
+    # sector caps via cvxpy constraints
+    if sector_caps and sector_map:
+        sectors = _sector_index_map(assets, sector_map)
+        for sector, idxs in sectors.items():
+            cap = sector_caps.get(sector)
+            if cap is None or len(idxs) == 0:
+                continue
+            constraints.append(cp.sum(w[idxs]) <= cap)
+
     if target_return is not None:
-        μ = returns.mean().values
-        constraints.append(μ @ w >= target_return)
+        constraints.append(mu @ w >= target_return)
+
+    if max_turnover is not None and previous_weights is not None:
+        prev = previous_weights.reindex(assets).fillna(0.0).values
+        constraints.append(cp.norm1(w - prev) <= max_turnover)
 
     obj = cp.Minimize(z + (1 / ((1 - alpha) * T)) * cp.sum(u))
-    cp.Problem(obj, constraints).solve(solver=cp.SCS, verbose=False)
-    return pd.Series(np.array(w.value).flatten(), index=returns.columns)
+    prob = cp.Problem(obj, constraints)
+    prob.solve(solver=cp.SCS, verbose=False)
+
+    if w.value is None:
+        # fallback equal weights
+        w_out = pd.Series(np.ones(n) / n, index=assets)
+    else:
+        w_out = pd.Series(np.array(w.value).flatten(), index=assets)
+
+    # final enforcement (cleanup)
+    w_out = _enforce_constraints_posthoc(
+        w_out,
+        long_only=long_only,
+        position_limit=position_limit,
+        sector_caps=sector_caps,
+        sector_map=sector_map,
+        previous_weights=previous_weights,
+        max_turnover=max_turnover,
+        weights_sum_to_one=True,
+    )
+
+    return w_out
 
 
+# ---------------------------------------------------------
 # Equal-Risk-Contribution (wrapper for risk parity)
-def equal_risk_contribution(returns: pd.DataFrame) -> pd.Series:
-    return risk_parity_optimize(returns)
+# ---------------------------------------------------------
+def equal_risk_contribution(returns: pd.DataFrame, **kwargs) -> pd.Series:
+    return risk_parity_optimize(returns, **kwargs)
 
 
+# ---------------------------------------------------------
 # Monte Carlo Robustness Simulations
+# ---------------------------------------------------------
 def monte_carlo_simulation(
         optimizer_fn,
         returns: pd.DataFrame,
         n_sims: int = 100,
         horizon: int = 252,
         random_seed: Optional[int] = None,
+        predicted_returns: Optional[pd.Series] = None,
+        blend: float = 0.5,
         **optimizer_kwargs,
 ) -> pd.DataFrame:
     """
@@ -178,7 +456,7 @@ def monte_carlo_simulation(
     Returns a DataFrame of simulated optimal weights.
     """
     rng = np.random.default_rng(random_seed)
-    μ = returns.mean().values
+    μ = get_effective_mu(returns, predicted_returns, blend).values
     Σ = returns.cov().values
     assets = returns.columns
     sims = []
@@ -188,7 +466,10 @@ def monte_carlo_simulation(
             rng.multivariate_normal(μ, Σ, size=horizon),
             columns=assets,
         )
-        w = optimizer_fn(sim_data, **optimizer_kwargs)
+        try:
+            w = optimizer_fn(sim_data, predicted_returns=predicted_returns, blend=blend, **optimizer_kwargs)
+        except TypeError:
+            w = optimizer_fn(sim_data, **optimizer_kwargs)
         sims.append(w)
 
     return pd.DataFrame(sims)
