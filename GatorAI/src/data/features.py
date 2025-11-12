@@ -58,3 +58,18 @@ def correlation_matrix(df: pd.DataFrame, other: pd.DataFrame) -> pd.DataFrame:
     # expects two dataframes with 'datetime' and 'close'
     merged = df[["datetime", "close"]].merge(other[["datetime", "close"]], on="datetime", suffixes=("", "_other"))
     return merged[["datetime"]].assign(corr=merged["close"].rolling(63).corr(merged["close_other"]))
+
+
+def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """Average True Range (ATR) indicator."""
+    high = df["high"]
+    low = df["low"]
+    close = df["close"]
+    
+    tr1 = high - low
+    tr2 = abs(high - close.shift())
+    tr3 = abs(low - close.shift())
+    
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.rolling(window=period).mean()
+    return atr.rename(f"atr_{period}")

@@ -108,6 +108,7 @@ async def main(argv: List[str] | None = None):
             "ema_cross": lambda df: feat.ema_crossover(df),
             "sharpe": lambda df: feat.rolling_sharpe(df),
             "vol": lambda df: feat.rolling_volatility(df),
+            "atr": lambda df: feat.atr(df),
         }
 
     # load from config file if provided (overrides CLI tickers/features if specified)

@@ -1,0 +1,17 @@
+{
+  "ticker": "SPY",
+  "timestamp": "20251109_134616",
+  "models": [
+    "linear"
+  ],
+  "metrics": {
+    "linear": {
+      "mean_mse": 0.022342808376990517,
+      "mean_mae": 0.10513008968452309,
+      "mean_rmse": 0.13517076976960501,
+      "mean_r2": -0.32505957430901744,
+      "mean_directional_accuracy": 0.5756741250717153,
+      "n_splits": 83
+    }
+  }
+}
