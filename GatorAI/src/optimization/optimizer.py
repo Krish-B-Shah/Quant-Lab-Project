@@ -499,6 +499,56 @@ def equal_risk_contribution(returns: pd.DataFrame, **kwargs) -> pd.Series:
 
 
 # ---------------------------------------------------------
+# Factor-risk model utilities (Fama–French style)
+# ---------------------------------------------------------
+def _estimate_factor_risk(returns: pd.DataFrame, factor_returns: pd.DataFrame) -> pd.DataFrame:
+    """
+    Estimate asset covariance using a linear factor model:
+    R_it = B_i F_t + e_it
+    Cov(R) = B Cov(F) B^T + diag(var(e))
+    """
+    # align by date index
+    aligned = returns.join(factor_returns, how="inner")
+    X = aligned[factor_returns.columns].values  # T x k
+    Σ_f = np.cov(X, rowvar=False)
+
+    assets = returns.columns
+    T = X.shape[0]
+    XTX_inv = np.linalg.pinv(X.T @ X)
+    B = []
+    idio_vars = []
+    for a in assets:
+        y = aligned[a].values.reshape(T, 1)
+        beta = XTX_inv @ (X.T @ y)  # k x 1
+        resid = y - X @ beta
+        B.append(beta.flatten())
+        idio_vars.append(float(np.var(resid, ddof=1)))
+    B = np.array(B)  # n x k
+    D = np.diag(idio_vars)
+    Σ = B @ Σ_f @ B.T + D
+    return pd.DataFrame(Σ, index=assets, columns=assets)
+
+
+def _get_covariance(
+        returns: pd.DataFrame,
+        *,
+        risk_model: str = "sample",
+        factor_returns: Optional[pd.DataFrame] = None,
+        epsilon: float = 1e-8,
+) -> pd.DataFrame:
+    if risk_model == "factor":
+        if factor_returns is None or factor_returns.empty:
+            raise ValueError("factor_returns must be provided when risk_model='factor'")
+        cov = _estimate_factor_risk(returns, factor_returns)
+    else:
+        cov = returns.cov()
+    cov = cov + np.eye(cov.shape[0]) * epsilon
+    cov.index = returns.columns
+    cov.columns = returns.columns
+    return cov
+
+
+# ---------------------------------------------------------
 # Monte Carlo Robustness Simulations
 # ---------------------------------------------------------
 def monte_carlo_simulation(
