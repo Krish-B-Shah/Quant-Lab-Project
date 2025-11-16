@@ -138,6 +138,12 @@ def mean_variance_optimize(
         predicted_returns: Optional[pd.Series] = None,
         blend: float = 0.5,
         risk_aversion: float = 1.0,
+        # regularization
+        l2_reg: float = 0.0,
+        l1_reg: float = 0.0,
+        # risk model
+        risk_model: str = "sample",
+        factor_returns: Optional[pd.DataFrame] = None,
         long_only: bool = True,
         weights_sum_to_one: bool = True,
         epsilon: float = 1e-8,
@@ -153,25 +159,48 @@ def mean_variance_optimize(
     and allow post-hoc enforcement of common production constraints for integration
     with dashboard/backtester.
     """
-    mu = get_effective_mu(returns, predicted_returns, blend)
-    cov = returns.cov() + np.eye(len(mu)) * epsilon
-    inv_cov = pd.DataFrame(inv(cov.values), index=cov.index, columns=cov.columns)
-    raw = inv_cov @ mu
-    w = raw / raw.sum()
+    assets = returns.columns
+    n = len(assets)
+    mu = get_effective_mu(returns, predicted_returns, blend).reindex(assets)
+    cov = _get_covariance(returns, risk_model=risk_model, factor_returns=factor_returns, epsilon=epsilon)
 
-    # original behavior: long-only and normalization
-    if long_only:
-        w = w.clip(lower=0.0)
-        if w.sum() == 0:
-            w = pd.Series(np.full_like(w, 1.0 / len(w)), index=w.index)
-        else:
-            w = w / w.sum()
+    # cvxpy Markowitz with optional L1/L2 regularization
+    w = cp.Variable(n)
+    objective = (
+        risk_aversion * cp.quad_form(w, cov.values)
+        - mu.values @ w
+        + l2_reg * cp.sum_squares(w)
+        + l1_reg * cp.norm1(w)
+    )
+    constraints = []
     if weights_sum_to_one:
-        w = w / w.sum()
+        constraints.append(cp.sum(w) == 1)
+    if long_only:
+        constraints.append(w >= 0)
+    if position_limit is not None:
+        constraints.append(w <= position_limit)
+    if sector_caps and sector_map:
+        sectors = _sector_index_map(assets, sector_map)
+        for _, idxs in sectors.items():
+            cap = sector_caps.get(_)
+            if cap is None or len(idxs) == 0:
+                continue
+            constraints.append(cp.sum(w[idxs]) <= cap)
+    if max_turnover is not None and previous_weights is not None:
+        prev = previous_weights.reindex(assets).fillna(0.0).values
+        constraints.append(cp.norm1(w - prev) <= max_turnover)
 
-    # Now enforce production constraints post-hoc (position limits, sector caps, turnover)
-    w = _enforce_constraints_posthoc(
-        w,
+    prob = cp.Problem(cp.Minimize(objective), constraints)
+    prob.solve(solver=cp.SCS, verbose=False)
+
+    if w.value is None:
+        w_out = pd.Series(np.ones(n) / n, index=assets)
+    else:
+        w_out = pd.Series(np.array(w.value).flatten(), index=assets)
+
+    # Enforce remaining constraints and normalization cleanly
+    w_out = _enforce_constraints_posthoc(
+        w_out,
         long_only=long_only,
         position_limit=position_limit,
         sector_caps=sector_caps,
@@ -181,7 +210,7 @@ def mean_variance_optimize(
         weights_sum_to_one=weights_sum_to_one,
     )
 
-    return w
+    return w_out
 
 
 def placeholder_weights():
@@ -208,6 +237,12 @@ def black_litterman_optimize(
         # ML integration
         predicted_returns: Optional[pd.Series] = None,
         blend: float = 0.5,
+        # regularization
+        l2_reg: float = 0.0,
+        l1_reg: float = 0.0,
+        # risk model
+        risk_model: str = "sample",
+        factor_returns: Optional[pd.DataFrame] = None,
         # constraints
         position_limit: Optional[float] = None,
         sector_caps: Optional[Dict[str, float]] = None,
@@ -228,7 +263,7 @@ def black_litterman_optimize(
     This version blends the Black-Litterman implied returns with ML predictions
     (if provided) via `blend` and applies simple production constraints post-hoc.
     """
-    Σ = returns.cov().values
+    Σ = _get_covariance(returns, risk_model=risk_model, factor_returns=factor_returns, epsilon=epsilon).values
     n = Σ.shape[0]
     assets = returns.columns
 
@@ -256,19 +291,39 @@ def black_litterman_optimize(
         # Blend predicted_returns with μ_bl: predicted has weight `blend`
         mu = (1.0 - blend) * μ_bl + blend * predicted_returns.reindex(assets).fillna(μ_bl)
 
-    # 3: Compute weights directly using mu (analytical inverse-cov like your original)
+    # 3: Optimize via cvxpy with regularization and constraints
     cov = pd.DataFrame(Σ, index=assets, columns=assets)
-    inv_cov = pd.DataFrame(np.linalg.inv(cov.values), index=assets, columns=assets)
-    raw = inv_cov @ mu
-    w = raw / raw.sum()
+    w = cp.Variable(n)
+    objective = (
+        risk_aversion * cp.quad_form(w, cov.values)
+        - mu.values @ w
+        + l2_reg * cp.sum_squares(w)
+        + l1_reg * cp.norm1(w)
+    )
+    constraints = [cp.sum(w) == 1, w >= 0]
+    if position_limit is not None:
+        constraints.append(w <= position_limit)
+    if sector_caps and sector_map:
+        sectors = _sector_index_map(assets, sector_map)
+        for sector, idxs in sectors.items():
+            cap = sector_caps.get(sector)
+            if cap is None or len(idxs) == 0:
+                continue
+            constraints.append(cp.sum(w[idxs]) <= cap)
+    if max_turnover is not None and previous_weights is not None:
+        prev = previous_weights.reindex(assets).fillna(0.0).values
+        constraints.append(cp.norm1(w - prev) <= max_turnover)
+    prob = cp.Problem(cp.Minimize(objective), constraints)
+    prob.solve(solver=cp.SCS, verbose=False)
 
-    # 4: Optional constraints - clip long only and normalize (original behavior)
-    w = w.clip(lower=0)
-    w = w / w.sum()
+    if w.value is None:
+        w_out = pd.Series(np.ones(n) / n, index=assets)
+    else:
+        w_out = pd.Series(np.array(w.value).flatten(), index=assets)
 
-    # Apply production constraints post-hoc
-    w = _enforce_constraints_posthoc(
-        w,
+    # Cleanup enforcement
+    w_out = _enforce_constraints_posthoc(
+        w_out,
         long_only=True,
         position_limit=position_limit,
         sector_caps=sector_caps,
@@ -278,7 +333,7 @@ def black_litterman_optimize(
         weights_sum_to_one=True,
     )
 
-    return w
+    return w_out
 
 
 # ---------------------------------------------------------
@@ -287,9 +342,11 @@ def black_litterman_optimize(
 def risk_parity_optimize(
         returns: pd.DataFrame,
         long_only: bool = True,
-        # kept signature param for API compatibility (not directly used by classic RP)
         predicted_returns: Optional[pd.Series] = None,
         blend: float = 0.5,
+        # risk model
+        risk_model: str = "sample",
+        factor_returns: Optional[pd.DataFrame] = None,
         # constraints
         position_limit: Optional[float] = None,
         sector_caps: Optional[Dict[str, float]] = None,
@@ -297,7 +354,7 @@ def risk_parity_optimize(
         previous_weights: Optional[pd.Series] = None,
         max_turnover: Optional[float] = None,
 ) -> pd.Series:
-    Σ = returns.cov().values
+    Σ = _get_covariance(returns, risk_model=risk_model, factor_returns=factor_returns).values
     assets = returns.columns
     n = len(assets)
 
@@ -356,6 +413,9 @@ def cvar_optimize(
         blend: float = 0.5,
         alpha: float = 0.95,
         target_return: Optional[float] = None,
+        # regularization
+        l2_reg: float = 0.0,
+        l1_reg: float = 0.0,
         long_only: bool = True,
         # constraints
         position_limit: Optional[float] = None,
@@ -406,7 +466,7 @@ def cvar_optimize(
         prev = previous_weights.reindex(assets).fillna(0.0).values
         constraints.append(cp.norm1(w - prev) <= max_turnover)
 
-    obj = cp.Minimize(z + (1 / ((1 - alpha) * T)) * cp.sum(u))
+    obj = cp.Minimize(z + (1 / ((1 - alpha) * T)) * cp.sum(u) + l2_reg * cp.sum_squares(w) + l1_reg * cp.norm1(w))
     prob = cp.Problem(obj, constraints)
     prob.solve(solver=cp.SCS, verbose=False)
 
